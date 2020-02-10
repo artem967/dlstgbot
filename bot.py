@@ -26,9 +26,6 @@ import tensorflow as tf
 import tensorflow_hub as hub
 hub_module = hub.load('https://tfhub.dev/google/magenta/arbitrary-image-stylization-v1-256/1')
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# В данном классе мы хотим полностью производить всю обработку картинок, которые поступают к нам из телеграма.
-# Это всего лишь заготовка, поэтому не стесняйтесь менять имена функций, добавлять аргументы, свои классы и
-# все такое.
 def imshow(tensor, title=None):
     unloader = transforms.ToPILImage()
     image = tensor.cpu().clone()   
@@ -37,75 +34,29 @@ def imshow(tensor, title=None):
     plt.imshow(image)
     if title is not None:
         plt.title(title)
-    plt.pause(0.001) 
-class StyleTransferModel:
-    def __init__(self):
-        # Сюда необходимо перенести всю иницализацию, вроде загрузки свеерточной сети и т.д.
-        pass
-
-    def transfer_style(self, content_img_stream, style_img_stream):
-        # Этот метод по переданным картинкам в каком-то формате (PIL картинка, BytesIO с картинкой
-        # или numpy array на ваш выбор). В телеграм боте мы получаем поток байтов BytesIO,
-        # а мы хотим спрятать в этот метод всю работу с картинками, поэтому лучше принимать тут эти самые потоки
-        # и потом уже приводить их к PIL, а потом и к тензору, который уже можно отдать модели.
-        # В первой итерации, когда вы переносите уже готовую модель из тетрадки с занятия сюда нужно просто
-        # перенести функцию run_style_transfer (не забудьте вынести инициализацию, которая
-        # проводится один раз в конструктор.
-
-        # Сейчас этот метод просто возвращает не измененную content картинку
-        # Для наглядности мы сначала переводим ее в тензор, а потом обратно
-        #transform = transforms.Compose([
-      #transforms.ToTensor(),
-    #])
-        #content=misc.toimage(self.process_image(content_img_stream)[0])
-        #style=misc.toimage(self.process_image(content_img_stream)[0])
-        #content.save(content_img_stream, format='PNG')
-        #style.save(style_img_stream, format='PNG')
-        #stylized_image = hub_module(transform(content[0]), transform(style[0]))[0]
-        #return misc.toimage(stylized_image)
-        plt.ion()   
-
-        # отрисовка
-
-        plt.figure()
-        imshow(self.process_image(style_img_stream), title='Style Image')
-
-        plt.figure()
-        imshow(self.process_image(content_img_stream), title='Content Image')
-        return misc.toimage(self.process_image(content_img_stream)[0])
-
-    # В run_style_transfer используется много внешних функций, их можно добавить как функции класса
-    # Если понятно, что функция является служебной и снаружи использоваться не должна, то перед именем функции
-    # принято ставить _ (выглядит это так: def _foo() )
-    # Эта функция тоже не является
-    def process_image(self, img_stream):
-        # TODO размер картинки, device и трансформации не меняются в течении всей работы модели,
-        # поэтому их нужно перенести в конструктор!
-        imsize = 128
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(device)
-        loader = transforms.Compose([
-            transforms.Resize(imsize),  # нормируем размер изображения
-            transforms.CenterCrop(imsize),
-            transforms.ToTensor()])  # превращаем в удобный формат
-
-        image = Image.open(img_stream)
-        image = loader(image).unsqueeze(0)
-        return image.to(device, torch.float)
-        class ContentLoss(nn.Module):
+    plt.pause(0.001)
+class ContentLoss(nn.Module):
 
         def __init__(self, target,):
             super(ContentLoss, self).__init__()
-            # we 'detach' the target content from the tree used
-            # to dynamically compute the gradient: this is a stated value,
-            # not a variable. Otherwise the forward method of the criterion
-            # will throw an error.
             self.target = target.detach()#это константа. Убираем ее из дерева вычеслений
             self.loss = F.mse_loss(self.target, self.target )#to initialize with something
 
         def forward(self, input):
             self.loss = F.mse_loss(input, self.target)
             return input
+def gram_matrix(input):
+        batch_size , h, w, f_map_num = input.size()  # batch size(=1)
+        # b=number of feature maps
+        # (h,w)=dimensions of a feature map (N=h*w)
+
+        features = input.view(batch_size * h, w * f_map_num)  # resise F_XL into \hat F_XL
+
+        G = torch.mm(features, features.t())  # compute the gram product
+
+        # we 'normalize' the values of the gram matrix
+        # by dividing by the number of element in each feature maps.
+        return G.div(batch_size * h * w * f_map_num)
 class StyleLoss(nn.Module):
         def __init__(self, target_feature):
             super(StyleLoss, self).__init__()
@@ -195,11 +146,13 @@ def get_style_model_and_losses(cnn, normalization_mean, normalization_std,
         model = model[:(i + 1)]
 
         return model, style_losses, content_losses
+
 def get_input_optimizer(input_img):
         # this line to show that input is a parameter that requires a gradient
         #добоваляет содержимое тензора катринки в список изменяемых оптимизатором параметров
         optimizer = optim.LBFGS([input_img.requires_grad_()]) 
         return optimizer
+    
 def run_style_transfer(cnn, normalization_mean, normalization_std,
                         content_img, style_img, input_img, num_steps=500,
                         style_weight=100000, content_weight=1):
@@ -252,31 +205,13 @@ def run_style_transfer(cnn, normalization_mean, normalization_std,
         input_img.data.clamp_(0, 1)
 
         return input_img
+    
 class StyleTransferModel:
     def __init__(self):
         # Сюда необходимо перенести всю иницализацию, вроде загрузки свеерточной сети и т.д.
         pass
 
     def transfer_style(self, content_img_stream, style_img_stream):
-        # Этот метод по переданным картинкам в каком-то формате (PIL картинка, BytesIO с картинкой
-        # или numpy array на ваш выбор). В телеграм боте мы получаем поток байтов BytesIO,
-        # а мы хотим спрятать в этот метод всю работу с картинками, поэтому лучше принимать тут эти самые потоки
-        # и потом уже приводить их к PIL, а потом и к тензору, который уже можно отдать модели.
-        # В первой итерации, когда вы переносите уже готовую модель из тетрадки с занятия сюда нужно просто
-        # перенести функцию run_style_transfer (не забудьте вынести инициализацию, которая
-        # проводится один раз в конструктор.
-
-        # Сейчас этот метод просто возвращает не измененную content картинку
-        # Для наглядности мы сначала переводим ее в тензор, а потом обратно
-        #transform = transforms.Compose([
-      #transforms.ToTensor(),
-    #])
-        #content=misc.toimage(self.process_image(content_img_stream)[0])
-        #style=misc.toimage(self.process_image(content_img_stream)[0])
-        #content.save(content_img_stream, format='PNG')
-        #style.save(style_img_stream, format='PNG')
-        #stylized_image = hub_module(transform(content[0]), transform(style[0]))[0]
-        #return misc.toimage(stylized_image)
         plt.ion()   
 
         # отрисовка
@@ -287,56 +222,49 @@ class StyleTransferModel:
         plt.figure()
         imshow(self.process_image(content_img_stream), title='Content Image')
         input_img = self.process_image(content_img_stream).clone()
-        return run_style_transfer(cnn, normalization_mean, normalization_std,
-                        self.process_image(content_img_stream), self.process_image(style_img_stream), input_img, num_steps=500,
+        
+        result = run_style_transfer(cnn, normalization_mean, normalization_std,
+                        self.process_image(content_img_stream), self.process_image(style_img_stream), input_img, num_steps=350,
                         style_weight=100000, content_weight=1)
-        #return misc.toimage(self.process_image(content_img_stream)[0])
-
-    # В run_style_transfer используется много внешних функций, их можно добавить как функции класса
-    # Если понятно, что функция является служебной и снаружи использоваться не должна, то перед именем функции
-    # принято ставить _ (выглядит это так: def _foo() )
-    # Эта функция тоже не является
+        plt.figure()
+        imshow(result, title='Result Image')
+        unloader = transforms.ToPILImage()
+        return result
     def process_image(self, img_stream):
-        # TODO размер картинки, device и трансформации не меняются в течении всей работы модели,
-        # поэтому их нужно перенести в конструктор!
-        imsize = 128
+        imsize = 1024
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(device)
         loader = transforms.Compose([
             transforms.Resize(imsize),  # нормируем размер изображения
             transforms.CenterCrop(imsize),
             transforms.ToTensor()])  # превращаем в удобный формат
-
         image = Image.open(img_stream)
         image = loader(image).unsqueeze(0)
         return image.to(device, torch.float)
+    
 !pip install python-telegram-bot
 !pip uninstall tornado
 !pip install tornado==4.5.3
 #from model import StyleTransferModel
 #from telegram_token import token
-token = "1088329434:AAGMxB0cUxw24noU7S1GLkrC6qrbQi2Kseg"
+token = "1088329434:AAERPnx8venT-QObDWSaN4XnKkLnNUHeyE8"
 from io import BytesIO
-PHOTO, MSG = range(2)
+PHOTO1, PHOTO2 = range(2)
 # В бейзлайне пример того, как мы можем обрабатывать две картинки, пришедшие от пользователя.
 import telegram
 model = StyleTransferModel()
 first_image_file = {}
-def text(bot, update):
-  update.message.reply_text('text', reply_markup=ReplyKeyboardRemove())
-  return PHOTO
-def skip_text():
-  pass
-def skip_photo():
-  pass
+
 def start(update, context):
   print("start")
   update.message.reply_text(
-        'Hello, send me two pictures. The first is for the content and the second is for the style', reply_markup=ReplyKeyboardRemove())
+        'Привет, я могу стилизовать одну картинку под другую. Давай начнём. Пришли мне картинку для стилизации', reply_markup=ReplyKeyboardRemove())
   #bot.send_message(chat_id=update.message.chat_id, text='Help!')
-  return PHOTO
+  return PHOTO1
 def cancel():
-  pass
+  update.message.reply_text(
+        'Отмена... Пришли мне картинку для стилизации', reply_markup=ReplyKeyboardRemove())
+  return PHOTO1
 def error(update, context):
     """Log Errors caused by Updates."""
     logger.warning('Update "%s" caused error "%s"', update, context.error)
@@ -345,11 +273,6 @@ def send_prediction_on_photo(update, context):
   user = update.message.from_user
   photo_file = update.message.photo[-1].get_file()
   photo_file.download('user_photo.jpg')
-  #logger.info("Photo of %s: %s", user.first_name, 'user_photo.jpg')
-    # Нам нужно получить две картинки, чтобы произвести перенос стиля, но каждая картинка приходит в
-    # отдельном апдейте, поэтому в простейшем случае мы будем сохранять id первой картинки в память,
-    # чтобы, когда уже придет вторая, мы могли загрузить в память уже сами картинки и обработать их.
-    # Точно место для улучшения, я бы
   chat_id = update.message.chat_id
   print("Got image from {}".format(chat_id))
 
@@ -358,7 +281,8 @@ def send_prediction_on_photo(update, context):
   image_file = bot.get_file(image_info)
 
   if chat_id in first_image_file:
-    # первая картинка, которая к нам пришла станет content image, а вторая style image
+    update.message.reply_text(
+        'Принял! Уже начинаю обработку!', reply_markup=ReplyKeyboardRemove())
     content_image_stream = BytesIO()
     first_image_file[chat_id].download(out=content_image_stream)
     del first_image_file[chat_id]
@@ -366,17 +290,24 @@ def send_prediction_on_photo(update, context):
     style_image_stream = BytesIO()
     image_file.download(out=style_image_stream)
     output = model.transfer_style(content_image_stream, style_image_stream)
-
-    # теперь отправим назад фото
+    image = output.cpu().clone()
+    image = image.squeeze(0)
+    unloader = transforms.ToPILImage()
+    image = unloader(image)
     output_stream = BytesIO()
-    output.save(output_stream, format='PNG')
+    image.save(output_stream, format='PNG')
+
     output_stream.seek(0)
     bot.send_photo(chat_id, photo=output_stream)
     print("Sent Photo to user")
+    update.message.reply_text(
+        'Вот и результат\nПрисылай следующую картинку для стилизации', reply_markup=ReplyKeyboardRemove())
   else:
     first_image_file[chat_id] = image_file
-    return PHOTO
-  return MSG
+    update.message.reply_text(
+        'Отлично. Теперь пришли мне картинку для стиля', reply_markup=ReplyKeyboardRemove())
+    return PHOTO2
+  return PHOTO1
 
 if __name__ == '__main__':
   from telegram import (ReplyKeyboardMarkup, ReplyKeyboardRemove)
@@ -389,14 +320,13 @@ if __name__ == '__main__':
       level=logging.INFO)
   logger = logging.getLogger(__name__)
   updater = Updater(token=token,use_context=True, request_kwargs={'proxy_url': 'socks5h://163.172.152.192:1080'})
-  #updater = Updater(token=token, use_context=True, request_kwargs={})
   conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            PHOTO: [MessageHandler(Filters.photo, send_prediction_on_photo),
-                    CommandHandler('skip', skip_photo)],
-            MSG: [MessageHandler(Filters.text, text),
-                       CommandHandler('skip', skip_text)],
+            PHOTO1: [MessageHandler(Filters.photo, send_prediction_on_photo),
+                    CommandHandler('cancel', cancel)],
+            PHOTO2: [MessageHandler(Filters.photo, send_prediction_on_photo),
+                    CommandHandler('cancel', cancel)],  
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
@@ -407,5 +337,4 @@ if __name__ == '__main__':
 
   # Start the Bot
   updater.start_polling()
-  #pdater.dispatcher.add_handler(MessageHandler(Filters.photo, send_prediction_on_photo))
   updater.idle()
